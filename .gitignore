@@ -62,6 +62,15 @@ npm-debug.log*
 # Sign files
 .sign/
 
+# BU8000 local credentials, diagnostics and signing material
+.local/
+diagnostics/
+*.p12
+*.pfx
+*.key
+author-signature.xml
+signature1.xml
+
 # Agents Stuff
 knowledge.md
 /.agents

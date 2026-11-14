@@ -1,0 +1,53 @@
+BU8000 customization development baseline
+
+Repository: https://github.com/DreamHoa/litefin
+Upstream: https://github.com/MoazSalem/litefin
+Working branch: codex/bu8000-custom
+Upstream baseline: 0ac5e764cf8f6364f48eb789c375fa2b7b4f2801
+Status: development candidate; target-device acceptance is pending.
+
+Commands
+- npm ci
+- npm test
+- npm run lint
+- npm run build:bu8000 (existing Modern target; output dist/modern)
+- npm run package:bu8000 (existing Tizen Modern WGT packaging task)
+The aliases do not yet prune platform code or add automatic content-based
+backend selection. Signing remains separate from packaging.
+
+Initial validation
+- Full Node test suite: 1119 passed, 0 failed.
+- Source-text assertions normalize CRLF to LF for cross-platform testing.
+- Build and hardware acceptance are separate validation steps.
+
+Development priorities
+1. Validate Emby authentication, media browsing and playback reporting.
+2. Validate embedded and external text and bitmap subtitles separately.
+3. Verify redirects, HTTP byte ranges, seeking and recovery on the target.
+4. Test audible HTML5 speed changes with compatible SDR content. Record
+   pitch, actual channel output, smoothness and subtitle synchronization.
+5. Validate native AVPlay HDR and multichannel playback before UI pruning.
+6. Add content-based backend selection only for verified combinations,
+   with manual override and playback-state recovery on fallback.
+7. Measure responsiveness and runtime memory before simplifying features.
+
+Subtitle architecture notes from the pinned upstream source
+- MediaHelper.getSubtitleUrl constructs a server extraction URL when a
+  subtitle has no DeliveryUrl; SubtitleManager._loadPGSTrack uses that URL.
+- PGSRenderer accepts a subtitle URL. External subtitle chunk downloads
+  are not proof of direct Matroska subtitle extraction.
+- Native Tizen embedded-text delivery and client-rendered PGS follow
+  different paths; test track mapping and data availability independently.
+- A server extraction failure must be distinguished from parsing, worker,
+  canvas and timing failures. Successful decoding requires subtitle bytes.
+- Test first/continuous cues, forward/backward seeks, track changes,
+  disabling subtitles, re-entry, clock synchronization and cleanup.
+- Passing tests or matching deployed file hashes do not replace visible
+  subtitle acceptance on hardware.
+
+Repository privacy
+- Keep device inventories, firmware details, private media samples, server
+  addresses, tokens, raw diagnostics and signing material out of Git.
+- Use ignored .local/ and diagnostics/ directories for local evidence.
+- Preserve upstream licensing and attribution.
+- Record source commit, artifact hashes and hardware acceptance separately.

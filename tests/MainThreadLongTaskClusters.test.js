@@ -29,7 +29,7 @@ import SpatialNavigator from '../src/ui/SpatialNavigator.js';
  * ============================================================================
  */
 
-const read = (relativePath) => fs.readFileSync(path.resolve(relativePath), 'utf8');
+const read = (relativePath) => fs.readFileSync(path.resolve(relativePath), 'utf8').replace(/\r\n/g, '\n');
 
 const sliceBetween = (source, startMarker, endMarker) => {
     const startIdx = source.indexOf(startMarker);
