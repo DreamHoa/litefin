@@ -17,6 +17,9 @@ import ASSRenderer from './ASSRenderer.js';
 import LibassWasmRenderer from './LibassWasmRenderer.js';
 import ASSJSRenderer from './ASSJSRenderer.js';
 import PGSRenderer from './PGSRenderer.js';
+import MkvPgsRenderer from './MkvPgsRenderer.js';
+import { createInBandTextSource } from './MkvTextSource.js';
+import { normalizeSubtitleCodec } from './SubtitleCodec.js';
 import MediaHelper from './MediaHelper.js';
 import SubtitleStyles from '../../utils/SubtitleStyles.js';
 import FontLoader from '../../utils/FontLoader.js';
@@ -107,6 +110,8 @@ export default class SubtitleManager {
 
         this._assRenderer = null;
         this._pgsRenderer = null;
+        this._inBandTextSource = null;
+        this._playhead = 0;
 
         // Stale-load guard for the async PGS download pipeline.
         // Incremented every time a new load starts OR destroy() is called.
@@ -225,6 +230,9 @@ export default class SubtitleManager {
         this._videoElement = isRealVideo ? rawVideo : null;
         this._playMethod = context.playMethod || 'DirectPlay';
         this._isHdr = Boolean(context.isHdr);
+        this._streamUrl = context.streamUrl || null;
+        this._mediaContainer = String(context.container || '').toLowerCase();
+        this._getPlaybackTime = context.getTime || (() => this._playhead);
 
         log.info(`Media context set: item=${this._itemId}, source=${this._mediaSourceId}, backend=${this._backendType}, playMethod=${this._playMethod}, isHdr=${this._isHdr}`);
     }
@@ -281,7 +289,7 @@ export default class SubtitleManager {
         // files, so our ASSRenderer must still handle them — do NOT suppress.
         // =====================================================================
         const burnIn = PlayerSettings.get('subtitleBurnIn');
-        if (burnIn === 'all') {
+        if (burnIn === 'all' && this._playMethod !== 'DirectPlay') {
             log.info(`Primary subtitle suppressed — server burn-in is active (mode: ${burnIn})`);
             this._onDeliveryChange({ primary: DeliveryMethod.NONE });
             return DeliveryMethod.NONE;
@@ -302,6 +310,12 @@ export default class SubtitleManager {
         }
 
         this._primaryTrack = track;
+
+        // A DirectPlay MKV has no burned-in subtitles. Read its indexed blocks
+        // when the server supplies no extraction URL, independent of AVPlay's
+        // incomplete embedded-track list. Preserve server delivery otherwise.
+        if (await this._tryInBandTrack(track)) return this._primaryDelivery;
+        if (this._isDestroyed || this._primaryTrack !== track) return DeliveryMethod.NONE;
 
         // Determine how to deliver this subtitle
         const delivery = this._determineDeliveryMethod(track);
@@ -413,6 +427,7 @@ export default class SubtitleManager {
      * @param {number} currentTimeSeconds - Current playback position in seconds
      */
     tick(currentTimeSeconds) {
+        this._playhead = currentTimeSeconds;
         // Tick primary subtitle (only if we're managing it, not the backend)
         if (this._primaryDelivery === DeliveryMethod.EXTERNAL_TEXT && this._primaryCues.length > 0) {
             this._tickCues(currentTimeSeconds, 'primary');
@@ -806,8 +821,63 @@ export default class SubtitleManager {
      * @returns {string} DeliveryMethod constant
      * @private
      */
+    async _tryInBandTrack(track) {
+        if (track.IsExternal || !this._streamUrl || this._playMethod !== 'DirectPlay' ||
+            !['mkv', 'matroska'].includes(this._mediaContainer) || track.DeliveryUrl) return false;
+        const codec = normalizeSubtitleCodec(track.Codec);
+        if (!['subrip', 'ass', 'ssa', 'pgssub'].includes(codec)) return false;
+        const ordinal = this._mediaStreams.filter(s => s.Type === 'Subtitle' && !s.IsExternal)
+            .findIndex(s => s.Index === track.Index);
+        if (ordinal < 0) return false;
+        const options = {
+            streamUrl: this._streamUrl, subtitleOrdinal: ordinal,
+            getTime: () => { try { return this._getPlaybackTime() || this._playhead || 0; } catch { return this._playhead || 0; } },
+            fetcher: (url, init) => this._fetchWithHeaders(url, init)
+        };
+        const isCurrent = () => !this._isDestroyed && this._primaryTrack === track;
+        if (codec === 'pgssub') {
+            const renderer = new MkvPgsRenderer({ ...options, container: this._container });
+            this._pgsRenderer = renderer;
+            const ready = await renderer.ready;
+            if (!ready || !isCurrent()) {
+                renderer.destroy();
+                if (this._pgsRenderer === renderer) this._pgsRenderer = null;
+                return false;
+            }
+            this._primaryDelivery = DeliveryMethod.PGS_BITMAP;
+        } else {
+            const byStart = new Map();
+            const source = createInBandTextSource({
+                ...options, language: track.Language,
+                onEvents: events => {
+                    if (!isCurrent()) return;
+                    for (const event of events) byStart.set(event.StartPositionTicks, {
+                        start: event.StartPositionTicks / 10000000,
+                        end: event.EndPositionTicks / 10000000,
+                        text: SubtitleParser._cleanText(event.Text)
+                    });
+                    this._primaryCues = [...byStart.values()].sort((a, b) => a.start - b.start);
+                    this._primaryActiveIndex = -1;
+                    log.info(`MKV ${codec}: received ${events.length} cues`);
+                }
+            });
+            this._inBandTextSource = source;
+            if (!(await source.ready) || !isCurrent()) {
+                source.dispose();
+                if (this._inBandTextSource === source) this._inBandTextSource = null;
+                return false;
+            }
+            // Embedded ASS fallback deliberately renders dialogue as plain text;
+            // it does not claim full ASS positioning/font compatibility.
+            this._primaryDelivery = DeliveryMethod.EXTERNAL_TEXT;
+        }
+        log.info(`MKV indexed subtitle selected: ${codec}`);
+        this._onDeliveryChange({ primary: this._primaryDelivery, track });
+        return true;
+    }
+
     _determineDeliveryMethod(track) {
-        const codec = (track.Codec || '').toLowerCase();
+        const codec = normalizeSubtitleCodec(track.Codec);
         const isExternal = track.IsExternal === true;
         const isEmbedded = !isExternal;
 
@@ -1587,6 +1657,8 @@ export default class SubtitleManager {
      * @private
      */
     _clearPrimary() {
+        this._inBandTextSource?.dispose();
+        this._inBandTextSource = null;
         const wasActive = this._primaryTrack !== null;
 
         this._primaryTrack = null;

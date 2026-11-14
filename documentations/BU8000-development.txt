@@ -51,3 +51,18 @@ Repository privacy
 - Use ignored .local/ and diagnostics/ directories for local evidence.
 - Preserve upstream licensing and attribution.
 - Record source commit, artifact hashes and hardware acceptance separately.
+
+Candidate build 20261114.1
+- Send the session token header before server-type discovery completes, so
+  cold starts and language reloads do not reject saved Emby sessions merely
+  because the server has not yet been identified.
+- Normalize HDMV_PGS_SUBTITLE and support indexed Matroska subtitle reads
+  when DirectPlay media lacks a server-provided subtitle delivery URL.
+- PGS renders decoded bitmap cues on a canvas; SubRip renders text cues.
+  The embedded ASS fallback renders dialogue text without full ASS styling.
+- MKV readers are adapted from Moonfin under MPL-2.0, with attribution in
+  each file. The decoder dependency is pinned to fflate 0.8.3.
+- Full suite: 1126 tests passed. Modified-file lint and Modern packaging
+  passed. Hardware playback and session-persistence acceptance are pending.
+- Optional local diagnostics (bu8000:diagnostics) expose playback counters
+  and controls, without exposing the player instance or authentication data.

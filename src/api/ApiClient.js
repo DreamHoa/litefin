@@ -650,10 +650,12 @@ export class ApiClient {
             headers['Authorization'] = authHeader;
 
             /*
-             * Emby servers require the token to be explicitly supplied via
-             * the dedicated 'X-Emby-Token' request header on authenticated endpoints.
+             * Send the shared Emby/Jellyfin token header even before server
+             * discovery completes. During cold/language reloads server:info is
+             * still empty; gating this header on isEmby() can reject a valid
+             * saved Emby session and cause AuthManager to delete it.
              */
-            if (this.isEmby() && this._accessToken) {
+            if (this._accessToken) {
                 headers['X-Emby-Token'] = this._accessToken;
             }
         }

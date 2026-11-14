@@ -369,6 +369,27 @@ export class JellyfinPlayer extends EventEmitter {
 
         // Initialize the appropriate backend
         this._initBackend();
+
+        // Opt-in device diagnostics expose playback controls and counters only,
+        // never the player instance, server address or authentication token.
+        if (typeof window !== 'undefined' && window.localStorage?.getItem('bu8000:diagnostics') === 'true') {
+            window.__bu8000Playback = {
+                selectSubtitle: index => this.setSubtitleStreamIndex(index),
+                seekSeconds: seconds => this.seek(seconds * 10000000),
+                snapshot: () => ({
+                    build: '20261114.1',
+                    backend: this._backendType,
+                    playMethod: this._currentPlayMethod,
+                    time: this.getCurrentPositionTicks() / 10000000,
+                    subtitleIndex: this._currentSubtitleStreamIndex,
+                    tracks: this.getSubtitleTracks().map(t => ({ index: t.Index, codec: t.Codec })),
+                    delivery: this._subtitleManager?._primaryDelivery,
+                    textCues: this._subtitleManager?._primaryCues.length,
+                    activeTextCue: !!this._subtitleManager?._activePrimaryCue,
+                    pgsTimestamps: this._subtitleManager?._pgsRenderer?._renderer?.implementation?.pgs?.updateTimestamps?.length || 0
+                })
+            };
+        }
     }
 
     // ========================================================================
@@ -2246,6 +2267,12 @@ export class JellyfinPlayer extends EventEmitter {
                 mediaSourceId: mediaSource.Id,
                 mediaStreams: mediaSource.MediaStreams || [],
                 mediaAttachments: mediaSource.MediaAttachments || [],
+                container: mediaSource.Container,
+                streamUrl: this._currentPlayMethod === 'DirectPlay' ? MediaHelper.buildStreamUrl({
+                    serverUrl: this.serverUrl, itemId: options.itemId, mediaSource,
+                    startPositionTicks: 0, authToken: this.authToken, backendType: this._backendType
+                }).url : null,
+                getTime: () => backend?.getCurrentTime?.() || 0,
                 // Use the resolved _backendType string so SubtitleManager knows
                 // whether it should attempt embedded-native subtitle routing
                 // (Tizen only) or always defer to external text/ASS/PGS paths.
@@ -3330,7 +3357,8 @@ export class JellyfinPlayer extends EventEmitter {
         const isComplexBurnIn = (_isAllComplex && isComplexCodec) ||
             (_isAllComplex && isTranscodingSession);
 
-        const needsBurnInRestart = burnIn === 'all' || isComplexBurnIn;
+        const needsBurnInRestart = this._currentMediaSource?.SupportsTranscoding !== false &&
+            (burnIn === 'all' || isComplexBurnIn);
 
         if (needsBurnInRestart && this._currentPlayOptions && !this._burnInRestartInProgress && !this._playSetupInProgress) {
             log.info(`Burn-in restart (mode: ${burnIn}, track: ${index}) — retranscoding`);

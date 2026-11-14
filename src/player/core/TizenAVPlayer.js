@@ -2412,7 +2412,7 @@ export class TizenAVPlayer {
             return 'INTERNAL_TEXT';
         }
 
-        const isBitmap = codec === 'pgs' || codec === 'pgssub' || codec === 'vobsub' || codec === 'dvdsub' || codec === 'dvd_subtitle';
+        const isBitmap = codec === 'pgs' || codec === 'pgssub' || codec === 'hdmv_pgs_subtitle' || codec === 'vobsub' || codec === 'dvdsub' || codec === 'dvd_subtitle';
         if (isBitmap) {
             return 'INTERNAL_BITMAP';
         }
@@ -2454,7 +2454,7 @@ export class TizenAVPlayer {
             // so that Jellyfin's text track N exactly aligns with Tizen's text track N.
             const jellyfinTextOnlyStreams = jellyfinSubStreams.filter(s => {
                 const codec = (s.Codec || '').toLowerCase();
-                return codec !== 'pgs' && codec !== 'pgssub' &&
+                return codec !== 'pgs' && codec !== 'pgssub' && codec !== 'hdmv_pgs_subtitle' &&
                     codec !== 'vobsub' && codec !== 'dvdsub' &&
                     codec !== 'dvd_subtitle';
             });
