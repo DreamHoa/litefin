@@ -118,3 +118,11 @@ Build 20261114.8-cache: minimal PGS Range cache fix
   rejected as the fix. Yesterday's unmeasured latency is not claimed known.
 - Complete suite: 1132 passed; changed-file lint and Modern packaging passed.
   Hardware timings include sampling uncertainty and are not universal SLAs.
+
+2026-11-14 — Selected-source playback and media information
+- PlaybackInfo has a direct fetch path outside ApiClient. Send the existing session token header regardless of server-identification timing, matching ApiClient behavior and avoiding a missing-token 401 on the fresh request path.
+- The playing-media modal now shows the active source by ID, including its name, instead of listing every version with the first source at the top. If the active source is unavailable it does not substitute another version.
+- Regression coverage checks the fresh request token/selected ID and nonfirst, omitted, and unavailable active-source metadata.
+- Device validation pending; HDR format labels are not changed by this fix.
+- Device validation passed on the signed build 20261114.9-source: nonfirst selected source retained after installation, native AVPlay DirectPlay at the expected 4K dimensions, fresh PlaybackInfo returned HTTP 200 with the token header, and the modal displayed exactly the active source. Session retained.
+- 1136 tests, changed-file ESLint, and Modern packaging passed. Upstream VideoRange and ColorTransfer metadata may disagree; this change does not infer HDR10+ from a source name.

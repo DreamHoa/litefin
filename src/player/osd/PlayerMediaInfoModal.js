@@ -113,12 +113,15 @@ export default class PlayerMediaInfoModal extends BaseMenu {
             const scrollable = this.$el.querySelector('.media-info-scrollable');
             if (!scrollable) return;
 
-            if (!fullItem.MediaSources || fullItem.MediaSources.length === 0) {
+            const activeSource = this.player.getCurrentMediaSource?.();
+            const activeSourceId = activeSource?.Id || this.osd._currentMediaSourceId;
+            const source = fullItem.MediaSources?.find((s) => s.Id === activeSourceId) || activeSource;
+            if (!source) {
                 scrollable.innerHTML = `<p class="media-info-empty">${i18n.t('NoMediaSourcesFound') || 'No media information available.'}</p>`;
                 return;
             }
 
-            this._renderInfo(scrollable, fullItem);
+            this._renderInfo(scrollable, { ...fullItem, MediaSources: [source] });
         } catch (err) {
             log.error('Failed to load media info specs:', err);
             if (this.$el) {
@@ -137,10 +140,10 @@ export default class PlayerMediaInfoModal extends BaseMenu {
     _renderInfo(container, item) {
         let html = '';
 
-        item.MediaSources.forEach((source, sourceIdx) => {
-            // Header for Source if multiple sources exist
-            if (item.MediaSources.length > 1) {
-                html += `<div class="media-info-source-title">${i18n.t('Source')} ${sourceIdx + 1}: ${source.Name || ''}</div>`;
+        item.MediaSources.forEach((source) => {
+            // Identify the source that is actually playing.
+            if (source.Name || source.Id) {
+                html += `<div class="media-info-source-title">${i18n.t('Source')}: ${source.Name || source.Id}</div>`;
             }
 
             // General Table

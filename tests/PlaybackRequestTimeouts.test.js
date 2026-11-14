@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { setImmediate } from 'node:timers';
 import vm from 'node:vm';
 
 /**
@@ -136,6 +137,30 @@ function createPlaybackInfoPlayer() {
         _backendType: 'webos'
     });
 }
+
+test('PlaybackInfo sends a saved session token before server identification and preserves the selected version', async () => {
+    const player = createPlaybackInfoPlayer();
+    let sent;
+    globalThis.fetch = async (_url, init) => {
+        sent = init;
+        const accepted = init.headers['X-Emby-Token'] === 't';
+        return {
+            ok: accepted,
+            status: accepted ? 200 : 401,
+            text: async () => 'Access token required',
+            json: async () => ({ MediaSources: [{ Id: 'first-sdr' }, { Id: 'selected-hdr' }] })
+        };
+    };
+    try {
+        const result = await player._getPlaybackInfo({
+            itemId: 'movie', userId: 'user', mediaSourceId: 'selected-hdr', item: { Type: 'Movie' }
+        }, {});
+        assert.equal(JSON.parse(sent.body).MediaSourceId, 'selected-hdr');
+        assert.equal(result.MediaSources[1].Id, 'selected-hdr');
+    } finally {
+        globalThis.fetch = realFetch;
+    }
+});
 
 test('JellyfinPlayer: a stalled PlaybackInfo request fails instead of spinning forever', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });

@@ -377,7 +377,7 @@ export class JellyfinPlayer extends EventEmitter {
                 selectSubtitle: index => this.setSubtitleStreamIndex(index),
                 seekSeconds: seconds => this.seek(seconds * 10000000),
                 snapshot: () => ({
-                    build: '20261114.8-cache',
+                    build: '20261114.9-source',
                     backend: this._backendType,
                     playMethod: this._currentPlayMethod,
                     time: this.getCurrentPositionTicks() / 10000000,
@@ -5023,13 +5023,13 @@ export class JellyfinPlayer extends EventEmitter {
              * Note that Emby's getAuthHeader() does not bake the token directly.
              */
             headers['Authorization'] = api.getAuthHeader();
-            if (this.authToken) {
-                headers['X-Emby-Token'] = this.authToken;
-            }
         } else {
             // Standard Jellyfin Authorization format
             headers['Authorization'] = api.getAuthHeader(this.authToken);
         }
+        // PlaybackInfo bypasses ApiClient.request; preserve its token-header
+        // behavior even when server identification has not completed.
+        if (this.authToken) headers['X-Emby-Token'] = this.authToken;
 
         let result;
         try {
