@@ -1,8 +1,8 @@
-/**
- * SPDX-License-Identifier: MPL-2.0
- * Adapted from Moonfin-Client/Smart-TV MKV subtitle readers.
- * Upstream: https://github.com/Moonfin-Client/Smart-TV
- * Local integration adds guarded Tizen client-side delivery.
+/** SPDX-License-Identifier: MPL-2.0
+ * Adapted from Moonfin-Client/Smart-TV's first working MKV PGS reader.
+ * https://github.com/Moonfin-Client/Smart-TV
+ * Integration adds fetch injection, logging, progressive ordered delivery and
+ * bounded read coalescing for high-latency Range servers.
  */
 /**
  * In-band PGS source for Matroska.
@@ -69,13 +69,15 @@ const SUBTITLE_TRACK_TYPE = 17;
 const SUP_FRAME_HEADER_BYTES = 10;
 const SUP_PTS_UNITS_PER_MS = 90;
 const HEAD_BYTES = 64 * 1024;
-const BLOCK_PROBE_BYTES = 64;
+// A 64-byte probe followed by a payload request doubles round trips for every
+// bitmap. A bounded 32 KiB read covers typical compositions; larger ones still
+// fetch their exact remaining tail. Full-file HTTP 200 responses remain refused.
+const BLOCK_PROBE_BYTES = 32 * 1024;
 const MAX_CUES_PER_BATCH = 64;
 const READ_CONCURRENCY = 4;
 const POLL_INTERVAL_MS = 100;
 const FETCH_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 500;
-const FETCH_TIMEOUT_MS = 8000;
 // How far the cursor can fall behind the playhead before it counts as a seek forward.
 const FORWARD_JUMP_MS = 5000;
 const RESTART_TOLERANCE_MS = 1000;
@@ -366,7 +368,6 @@ export const createInBandPgsSource = ({
     getTime,
     startTime = 0,
     lookaheadSeconds = 15,
-    fetchTimeoutMs = FETCH_TIMEOUT_MS,
     fetcher = fetch
 }) => {
     if (!streamUrl || typeof subtitleOrdinal !== 'number' || subtitleOrdinal < 0) return null;
@@ -381,6 +382,7 @@ export const createInBandPgsSource = ({
     let disposed = false;
     let compressionAlgorithm = null;
     let compressionSettings = null;
+    let preparedUnit = null;
     const clusterDataOffsets = new Map();
 
     const cueMs = (index) => cues[index].time * timestampScale;
@@ -390,43 +392,25 @@ export const createInBandPgsSource = ({
         if (response.body) response.body.cancel().catch(() => {});
     };
 
-    const requestRange = async (start, end, signal) => {
-        const response = await fetcher(streamUrl, { headers: { Range: `bytes=${start}-${end}` }, signal });
-        if (response.status === 206) return new Uint8Array(await response.arrayBuffer());
-        discard(response);
-        throw Object.assign(new Error(`range request not honoured: ${response.status}`), { status: response.status });
-    };
-
-    // The deadline includes the body, which may stall after successful response headers.
-    const requestWithDeadline = (start, end) =>
-        new Promise((resolve, reject) => {
-            const controller = typeof AbortController === 'undefined' ? null : new AbortController();
-            const timer = setTimeout(() => {
-                controller?.abort();
-                reject(new Error('range request timed out'));
-            }, fetchTimeoutMs);
-            requestRange(start, end, controller?.signal).then(
-                (bytes) => {
-                    clearTimeout(timer);
-                    resolve(bytes);
-                },
-                (err) => {
-                    clearTimeout(timer);
-                    reject(err);
-                }
-            );
-        });
-
     const fetchRange = async (start, end) => {
         for (let attempt = 1; ; attempt++) {
+            let response;
             try {
-                return await requestWithDeadline(start, end);
+                response = await fetcher(streamUrl, { headers: { Range: `bytes=${start}-${end}` } });
             } catch (err) {
-                const transient = !(err.status < 500);
-                if (!transient || disposed) throw err;
-                if (attempt >= FETCH_ATTEMPTS) throw Object.assign(err, { transient });
+                if (attempt >= FETCH_ATTEMPTS || disposed) throw err;
+                await delay(RETRY_DELAY_MS);
+                continue;
             }
-            await delay(RETRY_DELAY_MS);
+            if (response.status === 206) return new Uint8Array(await response.arrayBuffer());
+            discard(response);
+            if (response.status >= 500 && attempt < FETCH_ATTEMPTS && !disposed) {
+                await delay(RETRY_DELAY_MS);
+                continue;
+            }
+            // A server that ignores Range answers 200 with the whole file, which would make
+            // every offset below wrong, so treat that as a hard failure.
+            throw new Error(`range request not honoured: ${response.status}`);
         }
     };
 
@@ -529,42 +513,50 @@ export const createInBandPgsSource = ({
         if (!cues.length || cues.some((cue) => cue.relativePosition === null)) return false;
         // Read one access unit up front, so a layout this reader gets wrong falls back before anything shows.
         // mkvmerge and FFmpeg put a whole display set in each block, so it has to end with the end segment.
-        const frames = toSupFrames(await readAccessUnit(cues[0]));
+        arm(Math.max(0, startTime || 0) * 1000);
+        const cue = cues[nextCue];
+        const frames = toSupFrames(await readAccessUnit(cue));
+        preparedUnit = { cue, frames };
         return frames.length > 0 && frames[frames.length - 1][SUP_FRAME_HEADER_BYTES] === PGS_END_SEGMENT;
     };
 
-    const readCue = async (cue) => {
-        while (!disposed) {
-            try {
-                return toSupFrames(await readAccessUnit(cue));
-            } catch (err) {
-                if (!err.transient) {
-                    log.warn('[PgsRenderer] Skipped malformed in-band subtitle at', cue.time * timestampScale, err);
-                    return [];
-                }
-                // Retain this cue and its ordering across a temporary connection failure.
-                log.warn('[PgsRenderer] Retrying in-band subtitle at', cue.time * timestampScale, err);
-                await delay(RETRY_DELAY_MS);
-            }
-        }
-        return [];
-    };
-
-    const readBatch = async (targetMs) => {
+    const readBatch = async (targetMs, nowMs, controller) => {
         const batch = [];
         while (nextCue < cues.length && batch.length < MAX_CUES_PER_BATCH && cueMs(nextCue) <= targetMs) {
             batch.push(cues[nextCue++]);
         }
-        // libpgs completes a display set when the next composition arrives. Read beyond
-        // the prefetch window now, rather than waiting until the final prefetched cue is due.
-        if (batch.length && nextCue < cues.length) batch.push(cues[nextCue++]);
+        // libpgs only draws a display set once a later one is loaded, so one always sits past the playhead.
+        if (nextCue < cues.length && nextCue > 0 && cueMs(nextCue - 1) <= nowMs) batch.push(cues[nextCue++]);
         if (!batch.length) return null;
-        const frames = [];
+        let delivered = false;
         for (let i = 0; i < batch.length; i += READ_CONCURRENCY) {
-            const reads = batch.slice(i, i + READ_CONCURRENCY).map(readCue);
-            for (const unitFrames of await Promise.all(reads)) frames.push(...unitFrames);
+            const reads = batch.slice(i, i + READ_CONCURRENCY).map((cue) => {
+                if (preparedUnit?.cue === cue) {
+                    const frames = preparedUnit.frames;
+                    preparedUnit = null;
+                    return Promise.resolve(frames);
+                }
+                return readAccessUnit(cue)
+                    .then(toSupFrames)
+                    .catch((err) => {
+                        // Skipping one subtitle beats erroring the stream, which stops libpgs for the rest of playback.
+                        log.warn('[PgsRenderer] Skipped an in-band subtitle:', err);
+                        return [];
+                    });
+            });
+            // Publish each ready composition in timestamp order. Waiting for the
+            // entire lookahead batch holds current subtitles behind future HTTP
+            // requests, even though the decoder can already use the current data.
+            for (const read of reads) {
+                const unitFrames = await read;
+                if (disposed) return delivered;
+                if (unitFrames.length) {
+                    controller.enqueue(concat(unitFrames));
+                    delivered = true;
+                }
+            }
         }
-        return concat(frames);
+        return delivered;
     };
 
     // Put the cursor on the last cue at or before `targetMs`, which is the subtitle on screen there.
@@ -575,10 +567,7 @@ export const createInBandPgsSource = ({
         servedFromMs = cues.length ? Math.min(cueMs(nextCue), targetMs) : targetMs;
     };
 
-    const ready = prepare().then((ok) => {
-        if (ok) arm(Math.max(0, startTime || 0) * 1000);
-        return ok;
-    });
+    const ready = prepare();
     // A pull that never runs would otherwise leave this rejection unhandled.
     ready.catch(() => {});
 
@@ -600,20 +589,17 @@ export const createInBandPgsSource = ({
             const nowMs = (Number.isFinite(time) ? time : 0) * 1000;
             // After a seek forward, everything between the cursor and the playhead is already over.
             if (nextCue < cues.length && cueMs(nextCue) < nowMs - FORWARD_JUMP_MS) arm(nowMs);
-            const bytes = await readBatch(nowMs + lookaheadSeconds * 1000);
+            const delivered = await readBatch(nowMs + lookaheadSeconds * 1000, nowMs, controller);
             if (disposed) {
                 controller.close();
                 return;
             }
-            if (bytes?.length) {
-                controller.enqueue(bytes);
-                return;
-            }
+            if (delivered) return;
             if (nextCue >= cues.length) {
                 controller.close();
                 return;
             }
-            if (!bytes) await delay(POLL_INTERVAL_MS);
+            if (!delivered) await delay(POLL_INTERVAL_MS);
         }
     };
 

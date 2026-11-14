@@ -66,3 +66,35 @@ Candidate build 20261114.1
   passed. Hardware playback and session-persistence acceptance are pending.
 - Optional local diagnostics (bu8000:diagnostics) expose playback counters
   and controls, without exposing the player instance or authentication data.
+
+Baseline build 20261114.4-baseline
+- PGS reading is aligned with the first working Moonfin reader, retaining
+  only the Litefin fetch/logging adapter. Speculative epoch backtracking,
+  block-size tuning and batch-size tuning have been removed.
+- A controlled single-block HTTP 503 test verifies that valid subsequent
+  subtitle blocks are still delivered; an infinite per-cue retry must not
+  stall the entire batch. This reproduces a failure mechanism rather than
+  claiming it proves every earlier on-device failure.
+- Text-track Range handling cancels and retries a transient full-file 200
+  response without consuming the full media file.
+- Complete suite: 1128 passed; Modern build and packaging passed.
+
+Candidate build 20261114.7-ranges
+- The first Moonfin reader is a baseline, not a drop-in acceptance result.
+  Keep its bounded retries; remove the second reader's infinite per-cue retry.
+- A real libpgs 0.8.1 open-stream regression proves decoded timestamps may
+  remain unpublished when progress callbacks are throttled. The adapter
+  publishes the first parsed timeline without waiting for another HTTP batch.
+- Deliver ready compositions in timestamp order, rather than withholding
+  all current subtitles until the entire lookahead batch has completed.
+- Hardware traces show high per-request latency. A bounded 32 KiB probe
+  and reuse of the validated starting composition remove duplicate reads.
+  Tests verify byte preservation for both 20 KB and 60 KB compositions,
+  including exact oversized tails; full-file HTTP 200 remains refused.
+- Hardware PGS acceptance is partial: continuous bitmap drawing and recovery
+  after an uncached backward seek are confirmed with changing image hashes.
+  Cold track selection still took about 14 seconds, and uncached backward
+  recovery about 16 seconds. These delays remain open, not passed.
+- ASS is dialogue-only fallback; complete ASS styling is not implemented.
+- Full suite: 1132 passed; changed-file lint and Modern packaging passed.
+  Private hardware traces and credentials are excluded from this repository.

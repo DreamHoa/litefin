@@ -377,7 +377,7 @@ export class JellyfinPlayer extends EventEmitter {
                 selectSubtitle: index => this.setSubtitleStreamIndex(index),
                 seekSeconds: seconds => this.seek(seconds * 10000000),
                 snapshot: () => ({
-                    build: '20261114.1',
+                    build: '20261114.7-ranges',
                     backend: this._backendType,
                     playMethod: this._currentPlayMethod,
                     time: this.getCurrentPositionTicks() / 10000000,

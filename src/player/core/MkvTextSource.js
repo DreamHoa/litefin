@@ -112,7 +112,7 @@ export const createInBandTextSource = ({
             try {
                 return await requestWithDeadline(start, end);
             } catch (err) {
-                const transient = !(err.status < 500);
+                const transient = err.status === 200 || !(err.status < 500);
                 if (!transient || disposed) throw err;
                 if (attempt >= FETCH_ATTEMPTS) throw Object.assign(err, { transient });
             }

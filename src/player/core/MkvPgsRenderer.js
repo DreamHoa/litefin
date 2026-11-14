@@ -84,6 +84,14 @@ export default class MkvPgsRenderer {
             this.ready = this._start();
             return;
         }
+        const impl = this._renderer?.implementation;
+        // libpgs throttles progress callbacks to one per second. A fast first
+        // batch can be decoded before that threshold, then wait for the MKV
+        // reader's playback window. Publish the already parsed timeline once;
+        // subsequent entries are visible through the shared array reference.
+        if (impl?.pgs.updateTimestamps.length && impl.updateTimestamps !== impl.pgs.updateTimestamps) {
+            impl.invokeTimestampsUpdate();
+        }
         this._renderer?.renderAtTimestamp(time + this._offset);
     }
 
