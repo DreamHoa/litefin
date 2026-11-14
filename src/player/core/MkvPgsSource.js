@@ -396,7 +396,8 @@ export const createInBandPgsSource = ({
         for (let attempt = 1; ; attempt++) {
             let response;
             try {
-                response = await fetcher(streamUrl, { headers: { Range: `bytes=${start}-${end}` } });
+                // Cacheable 206 responses can serialize same-URL reads on Tizen.
+                response = await fetcher(streamUrl, { headers: { Range: `bytes=${start}-${end}` }, cache: 'no-store' });
             } catch (err) {
                 if (attempt >= FETCH_ATTEMPTS || disposed) throw err;
                 await delay(RETRY_DELAY_MS);

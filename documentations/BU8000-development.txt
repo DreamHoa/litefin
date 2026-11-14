@@ -98,3 +98,23 @@ Candidate build 20261114.7-ranges
 - ASS is dialogue-only fallback; complete ASS styling is not implemented.
 - Full suite: 1132 passed; changed-file lint and Modern packaging passed.
   Private hardware traces and credentials are excluded from this repository.
+
+Build 20261114.8-cache: minimal PGS Range cache fix
+- The only playback behavior change is cache: 'no-store' on indexed PGS
+  range requests. Cacheable same-resource requests serialized on the TV,
+  defeating the existing reader's four-way concurrency.
+- Same-target hardware A/B with both starting timelines ready: default
+  requests needed 7.421 seconds of subtitle data catch-up after native seek;
+  no-store needed 1.776 seconds. Earlier trials independently reproduced it.
+- Installed signed build, with no runtime cache override: +10-second seek
+  had zero additional subtitle data wait after landing. A large forward seek
+  needed 0.841 seconds of additional data wait (4.362 seconds to first bitmap,
+  including native seek). Unbuffered backward seek needed 3.521 seconds of
+  extra data wait, with first bitmap at 6.796 seconds; this cost remains.
+- The actual first Moonfin signed package was inspected, including its reader,
+  canvas adapter and Tizen call site. It also used default fetch caching.
+  Its extensionless Emby URL returned the same bytes and still serialized
+  default Range requests in the same-device control; changing URL shape was
+  rejected as the fix. Yesterday's unmeasured latency is not claimed known.
+- Complete suite: 1132 passed; changed-file lint and Modern packaging passed.
+  Hardware timings include sampling uncertainty and are not universal SLAs.
